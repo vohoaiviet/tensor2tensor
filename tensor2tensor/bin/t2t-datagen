@@ -29,6 +29,9 @@ from __future__ import division
 from __future__ import print_function
 
 import random
+import sys
+sys.path.extend('..')
+sys.path.extend('../..')
 import tempfile
 
 # Dependency imports
@@ -277,6 +280,9 @@ def main(_):
   # Calculate the list of problems to generate.
   problems = sorted(
       list(_SUPPORTED_PROBLEM_GENERATORS) + registry.list_problems())
+  print(len(registry.list_problems()))
+  print(registry.list_problems())
+  print(len(problems))
   if FLAGS.problem and FLAGS.problem[-1] == "*":
     problems = [p for p in problems if p.startswith(FLAGS.problem[:-1])]
   elif FLAGS.problem:

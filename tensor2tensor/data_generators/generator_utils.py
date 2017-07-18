@@ -251,10 +251,45 @@ _DATA_FILE_URLS = [
     ],
 ]
 
+def get_or_generate_vocab_es(tmp_dir, vocab_filename, vocab_size, datasets):
+  """Generate a vocabulary from the datasets in sources (_DATA_FILE_URLS)."""
+  vocab_filepath = os.path.join(tmp_dir, vocab_filename)
+  print(vocab_filepath)
+  if tf.gfile.Exists(vocab_filepath):
+    tf.logging.info("Found vocab file: %s", vocab_filepath)
+    vocab = text_encoder.SubwordTextEncoder(vocab_filepath)
+    return vocab
+
+  sources = datasets
+  tf.logging.info("Generating vocab from: %s", str(sources))
+  token_counts = defaultdict(int)
+  for source in sources:
+    for lang_file in source[0]:
+      tf.logging.info("Reading file: %s" % lang_file)
+      filepath = os.path.join(tmp_dir, lang_file)
+      print(filepath)
+
+      # Use Tokenizer to count the word occurrences.
+      with tf.gfile.GFile(filepath, mode="r") as source_file:
+        file_byte_budget = 3.5e5 if "en" in filepath else 7e5
+        for line in source_file:
+          if file_byte_budget <= 0:
+            break
+          line = line.strip()
+          file_byte_budget -= len(line)
+          for tok in tokenizer.encode(text_encoder.native_to_unicode(line)):
+            token_counts[tok] += 1
+
+  vocab = text_encoder.SubwordTextEncoder.build_to_target_size(
+      vocab_size, token_counts, 1, 1e3)
+  vocab.store_to_file(vocab_filepath)
+  return vocab
+
 
 def get_or_generate_vocab(tmp_dir, vocab_filename, vocab_size, sources=None):
   """Generate a vocabulary from the datasets in sources (_DATA_FILE_URLS)."""
   vocab_filepath = os.path.join(tmp_dir, vocab_filename)
+  print(vocab_filepath)
   if tf.gfile.Exists(vocab_filepath):
     tf.logging.info("Found vocab file: %s", vocab_filepath)
     vocab = text_encoder.SubwordTextEncoder(vocab_filepath)

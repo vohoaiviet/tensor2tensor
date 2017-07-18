@@ -37,6 +37,31 @@ tf.flags.DEFINE_string("ende_bpe_path", "", "Path to BPE files in tmp_dir."
 
 FLAGS = tf.flags.FLAGS
 
+@registry.register_problem("nf_enes_tokens_32k")
+class NFEnEsTokens32k(problem.Problem):
+  """Problem spec for WMT En-De translation."""
+
+  @property
+  def target_vocab_size(self):
+    return 2**15  # 32768
+
+  def feature_encoders(self, data_dir):
+    return _default_wmt_feature_encoders(data_dir, self.target_vocab_size)
+
+  def generate_data(self, data_dir, tmp_dir, num_shards=100):
+    generator_utils.generate_dataset_and_shuffle(
+        enes_wordpiece_token_generator(tmp_dir, True, self.target_vocab_size),
+        self.training_filepaths(data_dir, num_shards, shuffled=False),
+        enes_wordpiece_token_generator(tmp_dir, False, self.target_vocab_size),
+        self.dev_filepaths(data_dir, 1, shuffled=False))
+
+  def hparams(self, defaults, unused_model_hparams):
+    p = defaults
+    vocab_size = self._encoders["inputs"].vocab_size
+    p.input_modality = {"inputs": (registry.Modalities.SYMBOL, vocab_size)}
+    p.target_modality = (registry.Modalities.SYMBOL, vocab_size)
+    p.input_space_id = problem.SpaceID.EN_TOK
+    p.target_space_id = problem.SpaceID.DE_TOK
 
 @registry.register_problem("wmt_ende_tokens_8k")
 class WMTEnDeTokens8k(problem.Problem):
@@ -257,6 +282,25 @@ def ende_bpe_token_generator(tmp_dir, train):
   return token_generator(train_path + ".en", train_path + ".de", token_vocab,
                          EOS)
 
+_ENES_TRAIN_DATASETS = [
+    [
+        ("europarl-v7-max50-shuffled-train.es-en_cleaned.en",
+         "europarl-v7-max50-shuffled-train.es-en_cleaned.es")
+    ],
+    [
+        ("netflix_250-shuffled-train_cleaned.en", "netflix_250-shuffled-train_cleaned.es")
+    ]
+]
+
+_ENES_TEST_DATASETS = [
+    [
+        ("europarl-v7-max50-shuffled-eval.es-en_cleaned.en",
+         "europarl-v7-max50-shuffled-eval.es-en_cleaned.es")
+    ],
+    [
+        ("netflix_250-shuffled-eval_cleaned.en", "netflix_250-shuffled-eval_cleaned.es")
+    ]
+]
 
 _ENDE_TRAIN_DATASETS = [
     [
@@ -346,12 +390,12 @@ def _compile_data(tmp_dir, datasets, filename):
         compressed_filename = os.path.basename(url)
         compressed_filepath = os.path.join(tmp_dir, compressed_filename)
 
-        lang1_filename, lang2_filename = dataset[1]
+        lang1_filename, lang2_filename = dataset[0]
         lang1_filepath = os.path.join(tmp_dir, lang1_filename)
         lang2_filepath = os.path.join(tmp_dir, lang2_filename)
 
-        if not os.path.exists(compressed_filepath):
-          generator_utils.maybe_download(tmp_dir, compressed_filename, url)
+        # if not os.path.exists(compressed_filepath):
+        #   generator_utils.maybe_download(tmp_dir, compressed_filename, url)
         if not (os.path.exists(lang1_filepath) and
                 os.path.exists(lang2_filepath)):
           mode = "r:gz" if "gz" in compressed_filepath else "r"
@@ -375,6 +419,37 @@ def _compile_data(tmp_dir, datasets, filename):
 
   return filename
 
+def _compile_data_enes(tmp_dir, datasets, filename):
+  """Concatenate all `datasets` and save to `filename`."""
+  filename = os.path.join(tmp_dir, filename)
+  with tf.gfile.GFile(filename + ".lang1", mode="w") as lang1_resfile:
+    with tf.gfile.GFile(filename + ".lang2", mode="w") as lang2_resfile:
+      for dataset in datasets:
+        print('processing dataset:', dataset)
+
+        lang1_filename, lang2_filename = dataset[0]
+        lang1_filepath = os.path.join(tmp_dir, lang1_filename)
+        lang2_filepath = os.path.join(tmp_dir, lang2_filename)
+        print(lang1_filepath)
+        print(lang2_filepath)
+        with tf.gfile.GFile(lang1_filepath, mode="r") as lang1_file:
+          with tf.gfile.GFile(lang2_filepath, mode="r") as lang2_file:
+            line1, line2 = lang1_file.readline(), lang2_file.readline()
+            while line1 or line2:
+              lang1_resfile.write(line1.strip() + "\n")
+              lang2_resfile.write(line2.strip() + "\n")
+              line1, line2 = lang1_file.readline(), lang2_file.readline()
+
+  return filename
+
+def enes_wordpiece_token_generator(tmp_dir, train, vocab_size):
+  datasets = _ENES_TRAIN_DATASETS if train else _ENES_TEST_DATASETS
+  symbolizer_vocab = generator_utils.get_or_generate_vocab_es(
+      tmp_dir, "tokens.vocab.%d" % vocab_size, vocab_size, datasets)
+  tag = "train" if train else "dev"
+  data_path = _compile_data_enes(tmp_dir, datasets, "nf_enes_tok_%s" % tag)
+  return token_generator(data_path + ".lang1", data_path + ".lang2",
+                         symbolizer_vocab, EOS)
 
 def ende_wordpiece_token_generator(tmp_dir, train, vocab_size):
   symbolizer_vocab = generator_utils.get_or_generate_vocab(
